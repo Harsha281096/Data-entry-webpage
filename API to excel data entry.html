@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Text Extraction (Gemini) + Excel</title>
+<style>
+:root {
+  --bg: #f8f9fa;
+  --panel: #ffffff;
+  --muted: #6c757d;
+  --text: #212529;
+  --accent: #4285F4; /* Google Blue */
+  --accent-2: #34A853; /* Google Green */
+  --ok: #198754;
+  --warn: #ffc107;
+  --err: #dc3545;
+  --chip: #e9ecef;
+}
+html, body { height:100%; }
+body {
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font:14px/1.4 system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+.wrap { max-width:95vw; margin:0 auto; padding:20px; }
+header { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; }
+.title { font-size:18px; font-weight:700; letter-spacing:.2px }
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+input[type="file"] { display:none }
+.btn { appearance:none; border:1px solid #ced4da; background:var(--chip); color:var(--text); padding:10px 12px; border-radius:14px; cursor:pointer; transition:.2s; font-weight:600 }
+.btn:hover { border-color:var(--accent); box-shadow:0 0 0 3px rgba(66, 133, 244, 0.2); }
+.btn:disabled { opacity:.6; cursor:not-allowed; }
+.btn.primary { background:linear-gradient(135deg,var(--accent),var(--accent-2)); border:none; color:#fff }
+.main-content { display: flex; gap: 16px; }
+.panel { background:var(--panel); border:1px solid #dee2e6; border-radius:18px; padding:16px; flex: 1; min-width: 400px; display: flex; flex-direction: column;}
+.api-key-panel { background: white; border: 1px solid #dee2e6; border-radius: 18px; padding: 16px; margin-bottom: 16px; }
+#apiKey { width: 100%; padding: 10px; border: 1px solid #ced4da; border-radius: 12px; }
+.uploader { border:2px dashed #dee2e6; border-radius:16px; padding:16px; text-align:center; background:#f1f3f5 }
+.uploader.drag { border-color:var(--accent) }
+.toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px }
+.image-viewer { position:relative; overflow:auto; height:45vh; border-radius:12px; background:#f1f3f5; flex-shrink: 0; }
+#imageView { max-width:100%; display:block; margin:0 auto; }
+#extractedTextBox { 
+    flex-grow: 1;
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid #dee2e6;
+    border-radius: 12px;
+    background: #fff;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    user-select: text;
+    -webkit-user-select: text;
+}
+.sheet-view { overflow:auto; height:70vh; border-radius:12px; background:#ffffff; border:1px solid #dee2e6 }
+table { border-collapse:collapse; width:max-content; min-width:100% }
+th, td { border:1px solid #dee2e6; padding:8px 10px; min-width:100px }
+td[contenteditable="true"] { background:#fff8e1; user-select: auto; }
+tr:nth-child(even) td { background:#f8f9fa }
+td.hit { outline:2px solid var(--err); background:#ffebee !important }
+td:focus, td.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background-color: #e7f1ff !important;
+}
+.note { color:var(--muted) }
+.chips { display:flex; gap:6px; flex-wrap:wrap }
+.chip { background:#f1f3f5; border:1px solid #dee2e6; padding:6px 10px; border-radius:999px; color:#495057; font-weight:600 }
+footer { opacity:.7; font-size:12px; margin-top:10px }
+
+@media (max-width: 1024px) {
+  .main-content { flex-direction: column; }
+  .image-viewer, .sheet-view { height: 60vh; }
+}
+</style>
+<!-- Libraries -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="row">
+    <div class="title">AI Text Extraction + Excel</div>
+    <div class="chips"><span class="chip">Gemini AI</span><span class="chip">Drag-to-Copy</span><span class="chip">PDF & Image</span></div>
+  </div>
+</header>
+
+<section class="api-key-panel">
+    <label for="apiKey"><strong>Enter Your Google AI Studio API Key:</strong></label>
+    <input type="password" id="apiKey" placeholder="Your API key is required to extract text">
+</section>
+
+<div class="main-content">
+  <!-- AI Extractor Panel -->
+  <section class="panel">
+    <div class="uploader" id="fileDrop">
+      <p><strong>Drop PDF or Image here</strong> or</p>
+      <label class="btn" for="fileInput">Choose File</label>
+      <input id="fileInput" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" />
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="runAiExtraction" disabled>Extract Text with AI</button>
+      <div id="pdfNav" style="display:none;">
+          <span>Page: <span id="pageNum">0</span>/<span id="pageCount">0</span></span>
+          <button id="prevPage" class="btn" disabled>Prev</button>
+          <button id="nextPage" class="btn" disabled>Next</button>
+      </div>
+    </div>
+     <div class="toolbar">
+        <span id="aiStatus" class="note">Please upload a file.</span>
+     </div>
+    <div class="image-viewer" id="imageContainer">
+      <img id="imageView" alt="Upload a PDF or Image to see a preview" />
+    </div>
+    <div id="extractedTextBox" contenteditable="true">Extracted text will appear here...</div>
+  </section>
+
+  <!-- Excel Panel -->
+  <section class="panel">
+    <div class="uploader" id="xlDrop">
+      <p><strong>Drop Excel here</strong> or</p>
+      <label class="btn" for="xlInput">Choose Excel</label>
+      <input id="xlInput" type="file" accept=".xlsx,.xls" />
+    </div>
+    <div class="toolbar">
+      <input id="xlSearch" placeholder="Search cell text… (press Enter)" />
+      <button class="btn" id="xlFind">Find</button>
+      <button class="btn primary" id="xlDownload">Export .xlsx</button>
+       <span id="xlStatus" class="note"></span>
+    </div>
+    <div style="height: 40px;"></div> <!-- Spacer -->
+    <div class="sheet-view" id="sheetView"><table id="sheet"></table></div>
+  </section>
+</div>
+
+</div>
+
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+
+const $ = sel => document.querySelector(sel);
+const on = (el, ev, fn) => el.addEventListener(ev, fn);
+const byId = id => document.getElementById(id);
+
+function makeDroppable(box, onFiles){
+  ['dragenter','dragover'].forEach(ev=>box.addEventListener(ev,e=>{e.preventDefault();box.classList.add('drag');}));
+  ['dragleave','drop'].forEach(ev=>box.addEventListener(ev,e=>{box.classList.remove('drag');}));
+  box.addEventListener('drop', e=>{e.preventDefault();onFiles(e.dataTransfer.files);});
+}
+
+// --- AI & File Handling Section ---
+const fileInput = byId('fileInput'), fileDrop = byId('fileDrop'), imageView = byId('imageView'), aiStatus = byId('aiStatus');
+const pageNumEl = byId('pageNum'), pageCountEl = byId('pageCount'), prevBtn = byId('prevPage'), nextBtn = byId('nextPage'), pdfNav = byId('pdfNav');
+const runAiExtractionBtn = byId('runAiExtraction'), extractedTextBox = byId('extractedTextBox');
+
+let pdfDoc = null, currentPageNum = 1;
+let currentFileIsPdf = false;
+let currentImageData = null; // Store base64 data
+
+makeDroppable(fileDrop, files => { fileInput.files = files; fileInput.dispatchEvent(new Event('change')); });
+
+on(fileInput, 'change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    runAiExtractionBtn.disabled = true;
+    pdfNav.style.display = 'none';
+    extractedTextBox.textContent = 'Extracted text will appear here...';
+    aiStatus.textContent = 'Processing file...';
+
+    if (file.type === 'application/pdf') {
+        currentFileIsPdf = true;
+        pdfNav.style.display = 'flex';
+        const fileReader = new FileReader();
+        fileReader.onload = async function() {
+            const typedarray = new Uint8Array(this.result);
+            try {
+                pdfDoc = await pdfjsLib.getDocument({data: typedarray}).promise;
+                pageCountEl.textContent = pdfDoc.numPages;
+                currentPageNum = 1;
+                await renderPdfPage(currentPageNum);
+            } catch(err) { aiStatus.textContent = 'Error loading PDF: ' + err.message; }
+        };
+        fileReader.readAsArrayBuffer(file);
+    } else if (file.type.startsWith('image/')) {
+        currentFileIsPdf = false;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            imageView.src = e.target.result;
+            currentImageData = e.target.result.split(',')[1]; // Get base64 part
+            aiStatus.textContent = 'Image loaded. Ready to extract text.';
+            runAiExtractionBtn.disabled = false;
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
+async function renderPdfPage(num) {
+    if (!pdfDoc || num > pdfDoc.numPages || num < 1) return;
+    
+    aiStatus.textContent = `Rendering page ${num}...`;
+    currentPageNum = num;
+    pageNumEl.textContent = num;
+
+    const page = await pdfDoc.getPage(num);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+    const dataUrl = canvas.toDataURL('image/jpeg');
+    imageView.src = dataUrl;
+    currentImageData = dataUrl.split(',')[1]; // Store base64 part for API call
+
+    aiStatus.textContent = `Page ${num} loaded. Ready to extract text.`;
+    runAiExtractionBtn.disabled = false;
+    prevBtn.disabled = (num <= 1);
+    nextBtn.disabled = (num >= pdfDoc.numPages);
+}
+
+on(prevBtn, 'click', () => { if (currentPageNum > 1) renderPdfPage(currentPageNum - 1); });
+on(nextBtn, 'click', () => { if (currentPageNum < pdfDoc.numPages) renderPdfPage(currentPageNum + 1); });
+
+// --- Gemini API Call ---
+on(runAiExtractionBtn, 'click', async () => {
+    const apiKey = byId('apiKey').value.trim();
+    if (!apiKey) {
+        alert('Please enter your Google AI Studio API Key first.');
+        return;
+    }
+    if (!currentImageData) {
+        alert('No image data to process. Please upload a file.');
+        return;
+    }
+
+    aiStatus.textContent = 'Extracting text with AI... This may take a moment.';
+    runAiExtractionBtn.disabled = true;
+    extractedTextBox.textContent = '';
+
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+    
+    const payload = {
+        contents: [{
+            parts: [
+                { text: "Extract all text from this image. Preserve the original line breaks and layout as best as possible." },
+                { inlineData: { mimeType: "image/jpeg", data: currentImageData } }
+            ]
+        }]
+    };
+
+    try {
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`API Error: ${errorData.error.message}`);
+        }
+
+        const result = await response.json();
+        const text = result.candidates[0]?.content?.parts[0]?.text;
+
+        if (text) {
+            extractedTextBox.textContent = text;
+            aiStatus.textContent = 'Text extraction successful.';
+        } else {
+            throw new Error('No text found in the API response.');
+        }
+    } catch (error) {
+        aiStatus.textContent = `Error: ${error.message}`;
+        extractedTextBox.textContent = `Extraction failed. Please check your API key, network connection, and the browser console for details.`;
+    } finally {
+        runAiExtractionBtn.disabled = false;
+    }
+});
+
+
+// --- Excel Section ---
+const xlInput = byId('xlInput'), xlDrop = byId('xlDrop'), sheetTbl = byId('sheet'), sheetView = byId('sheetView'), xlStatus = byId('xlStatus');
+let wb, wsName;
+makeDroppable(xlDrop, files=>{ xlInput.files = files; xlInput.dispatchEvent(new Event('change')); });
+on(xlInput,'change',()=>{
+  const f = xlInput.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload=(e)=>{
+    const data = new Uint8Array(e.target.result);
+    wb = XLSX.read(data, {type:'array'});
+    wsName = wb.SheetNames[0];
+    renderSheet();
+  };
+  reader.readAsArrayBuffer(f);
+});
+function renderSheet(){
+  sheetTbl.innerHTML='';
+  const ws = wb.Sheets[wsName];
+  const json = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+  const rows = json.length ? json : [[]];
+  const thead=document.createElement('thead'), trh=document.createElement('tr');
+  const maxCols = rows.reduce((m,r)=>Math.max(m, r.length), 0);
+  for(let c=0;c<maxCols;c++){ const th=document.createElement('th'); th.textContent=XLSX.utils.encode_col(c); trh.appendChild(th);}
+  thead.appendChild(trh); sheetTbl.appendChild(thead);
+  const tbody=document.createElement('tbody');
+  rows.forEach((r,ri)=>{
+    const tr=document.createElement('tr');
+    for(let c=0;c<maxCols;c++){
+      const td=document.createElement('td');
+      td.contentEditable=true;
+      td.textContent=r[c]!==undefined?r[c]:'';
+      td.dataset.r=ri; td.dataset.c=c;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+  sheetTbl.appendChild(tbody);
+}
+on(sheetTbl,'input',(e)=>{
+  const td=e.target.closest('td'); if(!td) return;
+  const r=parseInt(td.dataset.r,10), c=parseInt(td.dataset.c,10);
+  const addr = XLSX.utils.encode_cell({r, c});
+  const ws=wb.Sheets[wsName];
+  if (!ws['!ref']) { ws['!ref'] = 'A1'; }
+  if(td.textContent.trim()===''){ delete ws[addr]; } 
+  else { XLSX.utils.sheet_add_aoa(ws, [[td.textContent]], { origin: addr }); }
+});
+on(byId('xlDownload'),'click',()=>{ if(!wb){alert('Open an Excel file first.');return;} XLSX.writeFile(wb,'updated.xlsx'); });
+
+// --- NEW: Excel Search Functionality ---
+let xlHits=[], xlHitIdx=-1, lastSearchQuery = '';
+function searchXL(q){
+  if(!q) return;
+  
+  // If it's a new search term, reset the hits
+  if (q !== lastSearchQuery) {
+      xlHits = Array.from(sheetTbl.querySelectorAll('tbody td')).filter(td=>(td.textContent||'').toLowerCase().includes(q.toLowerCase()));
+      xlHitIdx = -1;
+      lastSearchQuery = q;
+      sheetTbl.querySelectorAll('.hit').forEach(el=>el.classList.remove('hit'));
+  }
+
+  if(!xlHits.length){ xlStatus.textContent='No matches'; return; }
+  
+  xlHitIdx=(xlHitIdx+1)%xlHits.length;
+  
+  sheetTbl.querySelectorAll('.hit').forEach(el=>el.classList.remove('hit'));
+  const cell=xlHits[xlHitIdx]; 
+  cell.classList.add('hit');
+  
+  // Scroll into view
+  cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  
+  xlStatus.textContent=`Match ${xlHitIdx+1}/${xlHits.length}`;
+}
+on(byId('xlFind'),'click',()=>searchXL(byId('xlSearch').value.trim().toLowerCase()));
+on(byId('xlSearch'),'keydown',e=>{if(e.key==='Enter') searchXL(e.target.value.trim().toLowerCase());});
+
+
+// --- Copy & Paste and Cell Navigation ---
+on(extractedTextBox, 'mouseup', (e) => {
+    setTimeout(() => {
+        const textToCopy = window.getSelection().toString().trim();
+        if (!textToCopy) return;
+
+        const targetCell = sheetTbl.querySelector('td.selected');
+        if (!targetCell) {
+            alert('Please click a cell in the Excel sheet first to select it.');
+            window.getSelection().removeAllRanges();
+            return;
+        }
+
+        targetCell.textContent = textToCopy;
+        targetCell.dispatchEvent(new Event('input', { bubbles: true }));
+        aiStatus.textContent = `Copied "${textToCopy.substring(0, 20)}..." to cell.`;
+        
+        window.getSelection().removeAllRanges();
+
+        let r = parseInt(targetCell.dataset.r, 10);
+        let c = parseInt(targetCell.dataset.c, 10);
+        const nextCell = sheetTbl.querySelector(`td[data-r="${r + 1}"][data-c="${c}"]`);
+        if (nextCell) {
+            if (currentSelectedCell) currentSelectedCell.classList.remove('selected');
+            nextCell.classList.add('selected');
+            currentSelectedCell = nextCell;
+            nextCell.focus();
+        }
+    }, 0);
+});
+
+let currentSelectedCell = null;
+on(sheetTbl, 'click', (e) => {
+    const cell = e.target.closest('td');
+    if (!cell) return;
+    if (currentSelectedCell) currentSelectedCell.classList.remove('selected');
+    cell.classList.add('selected');
+    currentSelectedCell = cell;
+});
+on(sheetTbl, 'keydown', (e) => {
+    const key = e.key;
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return;
+    e.preventDefault();
+    const currentCell = document.activeElement.closest('td');
+    if (!currentCell) return;
+    let r = parseInt(currentCell.dataset.r, 10);
+    let c = parseInt(currentCell.dataset.c, 10);
+    switch (key) {
+        case 'ArrowUp':    r--; break;
+        case 'ArrowDown':  r++; break;
+        case 'ArrowLeft':  c--; break;
+        case 'ArrowRight': c++; break;
+    }
+    const nextCell = sheetTbl.querySelector(`td[data-r="${r}"][data-c="${c}"]`);
+    if (nextCell) {
+        if (currentSelectedCell) currentSelectedCell.classList.remove('selected');
+        nextCell.classList.add('selected');
+        currentSelectedCell = nextCell;
+        nextCell.focus();
+    }
+});
+</script>
+</body>
+</html>
